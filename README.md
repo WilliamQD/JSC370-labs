@@ -175,10 +175,6 @@ met_merged <- merge(
 )
 ```
 
-``` r
-met_lz <- lazy_dt(met_merged, immutable = FALSE)
-```
-
 ## Question 1: Representative station for the US
 
 Across all weather stations, what is the median station in terms of
@@ -187,19 +183,13 @@ weather stations that best represent continental US using the
 `quantile()` function. Do these three coincide?
 
 ``` r
-nrow(met_lz)
-```
-
-    ## [1] 2377343
-
-``` r
-met_avg_lz <- met_lz %>% 
+met_avg_lz <- met_merged %>% 
   group_by(USAFID) %>% 
   summarise(
     temp = mean(temp, na.rm = TRUE),
     wind.sp = mean(wind.sp, na.rm=TRUE),
     atm.press = mean(atm.press, na.rm=TRUE)
-  )
+  ) %>% collect()
 ```
 
 ``` r
@@ -208,7 +198,7 @@ met_med_lz <- met_avg_lz %>%
     c(temp, wind.sp, atm.press), 
     function(x) quantile(x, prob = 0.5, na.rm = TRUE) 
     )
-  )
+  ) %>% collect()
 ```
 
 ``` r
@@ -217,21 +207,13 @@ met_avg_lz %>%
     temp == met_med_lz %>%  pull(temp) | 
     wind.sp == met_med_lz %>%  pull(wind.sp) |
     atm.press == met_med_lz %>%  pull(atm.press)
-  )
+  ) %>% collect()
 ```
 
-    ## Source: local data table [1 x 4]
-    ## Call:   `_DT1`[, .(temp = mean(temp, na.rm = TRUE), wind.sp = mean(wind.sp, 
-    ##     na.rm = TRUE), atm.press = mean(atm.press, na.rm = TRUE)), 
-    ##     keyby = .(USAFID)][temp == met_med_lz %>% pull(temp) | wind.sp == 
-    ##     met_med_lz %>% pull(wind.sp) | atm.press == met_med_lz %>% 
-    ##     pull(atm.press)]
-    ## 
+    ## # A tibble: 1 × 4
     ##   USAFID  temp wind.sp atm.press
     ##    <int> <dbl>   <dbl>     <dbl>
     ## 1 720929  17.4    2.46       NaN
-    ## 
-    ## # Use as.data.table()/as.data.frame()/as_tibble() to access results
 
 ``` r
 met_avg_lz %>% 
@@ -239,24 +221,15 @@ met_avg_lz %>%
     between(temp, met_med_lz %>%  pull(temp) - 0.003, met_med_lz %>%  pull(temp) + 0.002) | 
     wind.sp == met_med_lz %>%  pull(wind.sp) |
     between(atm.press, met_med_lz %>%  pull(atm.press) - 0.0005, met_med_lz %>%  pull(atm.press) + 0.001) 
-  ) 
+  ) %>% collect()
 ```
 
-    ## Source: local data table [3 x 4]
-    ## Call:   `_DT1`[, .(temp = mean(temp, na.rm = TRUE), wind.sp = mean(wind.sp, 
-    ##     na.rm = TRUE), atm.press = mean(atm.press, na.rm = TRUE)), 
-    ##     keyby = .(USAFID)][between(temp, met_med_lz %>% pull(temp) - 
-    ##     0.003, met_med_lz %>% pull(temp) + 0.002) | wind.sp == met_med_lz %>% 
-    ##     pull(wind.sp) | between(atm.press, met_med_lz %>% pull(atm.press) - 
-    ##     5e-04, met_med_lz %>% pull(atm.press) + 0.001)]
-    ## 
+    ## # A tibble: 3 × 4
     ##   USAFID  temp wind.sp atm.press
     ##    <int> <dbl>   <dbl>     <dbl>
     ## 1 720458  23.7    1.21      NaN 
     ## 2 720929  17.4    2.46      NaN 
     ## 3 723200  25.8    1.54     1015.
-    ## 
-    ## # Use as.data.table()/as.data.frame()/as_tibble() to access results
 
 Knit the document, commit your changes, and save it on GitHub. Don’t
 forget to add `README.md` to the tree, the first time you render it.
@@ -270,21 +243,130 @@ multiple stations show in the median, select the one located at the
 lowest latitude.
 
 ``` r
-udist <- function(a, b) {
-    sqrt(sum((a - b)^2))
+udist <- function(a, b, c, d, e, f) {
+    sqrt((a - d)^2 + (b - e)^2 + (c - f)^2)
 }
 ```
 
 ``` r
-met_avg_state <- met_lz %>% 
+met_avg_state <- met_merged %>% 
   group_by(USAFID) %>% 
   summarise(
     temp = mean(temp, na.rm = TRUE),
     wind.sp = mean(wind.sp, na.rm=TRUE),
     atm.press = mean(atm.press, na.rm=TRUE),
+    state = STATE
+  )  %>% distinct() %>%  collect()
+
+# find median of each state
+state_med <-  met_avg_state %>% group_by(state) %>% summarise(
+    state_temp = median(temp, na.rm=TRUE),
+    state_wind.sp = median(wind.sp, na.rm=TRUE),
+    state_atm.press = median(atm.press, na.rm=TRUE),
     state = state
-  )
+  ) %>% distinct() %>% collect()
 ```
+
+    ## `summarise()` has grouped output by 'state'. You can override using the
+    ## `.groups` argument.
+
+``` r
+state_med
+```
+
+    ## # A tibble: 48 × 4
+    ## # Groups:   state [48]
+    ##    state state_temp state_wind.sp state_atm.press
+    ##    <chr>      <dbl>         <dbl>           <dbl>
+    ##  1 AL          26.3          1.66           1015.
+    ##  2 AR          26.2          1.94           1015.
+    ##  3 AZ          30.3          3.07           1010.
+    ##  4 CA          22.7          2.57           1013.
+    ##  5 CO          21.5          3.10           1013.
+    ##  6 CT          22.4          2.10           1015.
+    ##  7 DE          24.6          2.75           1015.
+    ##  8 FL          27.6          2.71           1015.
+    ##  9 GA          26.7          1.50           1015.
+    ## 10 IA          21.3          2.68           1015.
+    ## # … with 38 more rows
+
+``` r
+met_avg_state_andmed <- merge(
+  x = met_avg_state,
+  y = state_med,
+  by.x = "state",
+  by.y = "state",
+  all.x = TRUE,
+  all.y = FALSE
+)
+```
+
+``` r
+met_avg_state_andmed[is.na(met_avg_state_andmed)] <- 0
+diff_station <- met_avg_state_andmed %>% 
+  mutate(distance = udist(temp, wind.sp, atm.press, state_temp, state_wind.sp, state_atm.press))
+```
+
+``` r
+min_diff <- diff_station %>% group_by(state) %>% summarise(min_diff = min(distance))
+merge(
+  x = min_diff,
+  y = diff_station,
+  by.x = c("min_diff", "state"),
+  by.y = c("distance", "state"),
+  all.x = FALSE,
+  all.y = FALSE) %>% select(USAFID, state)
+```
+
+    ##    USAFID state
+    ## 1  724180    DE
+    ## 2  720254    WA
+    ## 3  722106    FL
+    ## 4  722286    AL
+    ## 5  725064    MA
+    ## 6  722416    TX
+    ## 7  723545    OK
+    ## 8  720911    ND
+    ## 9  725480    IA
+    ## 10 722358    MS
+    ## 11 724176    WV
+    ## 12 722745    AZ
+    ## 13 724016    VA
+    ## 14 724580    KS
+    ## 15 725560    NE
+    ## 16 723174    NC
+    ## 17 725327    IN
+    ## 18 724090    NJ
+    ## 19 725079    RI
+    ## 20 725867    ID
+    ## 21 722486    LA
+    ## 22 722970    CA
+    ## 23 723346    TN
+    ## 24 723160    GA
+    ## 25 726077    ME
+    ## 26 724298    OH
+    ## 27 725395    MI
+    ## 28 725087    CT
+    ## 29 725755    UT
+    ## 30 725130    PA
+    ## 31 726115    VT
+    ## 32 724057    MD
+    ## 33 726050    NH
+    ## 34 726590    SD
+    ## 35 723495    MO
+    ## 36 726798    MT
+    ## 37 723407    AR
+    ## 38 725194    NY
+    ## 39 726650    WY
+    ## 40 725440    IL
+    ## 41 724240    KY
+    ## 42 726452    WI
+    ## 43 723190    SC
+    ## 44 726550    MN
+    ## 45 725805    NV
+    ## 46 724767    CO
+    ## 47 725895    OR
+    ## 48 722686    NM
 
 Knit the doc and save it on GitHub.
 

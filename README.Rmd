@@ -138,25 +138,21 @@ met_merged <- merge(
   all.y = FALSE
 )
 ```
-```{r}
-met_lz <- lazy_dt(met_merged, immutable = FALSE)
-```
+
 
 ## Question 1: Representative station for the US
 
 Across all weather stations, what is the median station in terms of temperature, wind speed, and atmospheric pressure? Look for the three weather stations that best represent continental US using the `quantile()` function. Do these three coincide?
-```{r}
-nrow(met_lz)
-```
+
 
 ```{r}
-met_avg_lz <- met_lz %>% 
+met_avg_lz <- met_merged %>% 
   group_by(USAFID) %>% 
   summarise(
     temp = mean(temp, na.rm = TRUE),
     wind.sp = mean(wind.sp, na.rm=TRUE),
     atm.press = mean(atm.press, na.rm=TRUE)
-  )
+  ) %>% collect()
 ```
 
 
@@ -166,7 +162,7 @@ met_med_lz <- met_avg_lz %>%
     c(temp, wind.sp, atm.press), 
     function(x) quantile(x, prob = 0.5, na.rm = TRUE) 
     )
-  )
+  ) %>% collect()
 ```
 
 ```{r}
@@ -175,7 +171,7 @@ met_avg_lz %>%
     temp == met_med_lz %>%  pull(temp) | 
     wind.sp == met_med_lz %>%  pull(wind.sp) |
     atm.press == met_med_lz %>%  pull(atm.press)
-  )
+  ) %>% collect()
 ```
 
 ```{r}
@@ -184,7 +180,7 @@ met_avg_lz %>%
     between(temp, met_med_lz %>%  pull(temp) - 0.003, met_med_lz %>%  pull(temp) + 0.002) | 
     wind.sp == met_med_lz %>%  pull(wind.sp) |
     between(atm.press, met_med_lz %>%  pull(atm.press) - 0.0005, met_med_lz %>%  pull(atm.press) + 0.001) 
-  ) 
+  ) %>% collect()
 ```
 
 Knit the document, commit your changes, and save it on GitHub. Don't forget to add `README.md` to the tree, the first time you render it.
@@ -194,22 +190,55 @@ Knit the document, commit your changes, and save it on GitHub. Don't forget to a
 Just like the previous question, you are asked to identify what is the most representative, the median, station per state. This time, instead of looking at one variable at a time, look at the euclidean distance. If multiple stations show in the median, select the one located at the lowest latitude.
 
 ```{r}
-udist <- function(a, b) {
-    sqrt(sum((a - b)^2))
+udist <- function(a, b, c, d, e, f) {
+    sqrt((a - d)^2 + (b - e)^2 + (c - f)^2)
 }
 ```
 ```{r}
-met_avg_state <- met_lz %>% 
+met_avg_state <- met_merged %>% 
   group_by(USAFID) %>% 
   summarise(
     temp = mean(temp, na.rm = TRUE),
     wind.sp = mean(wind.sp, na.rm=TRUE),
     atm.press = mean(atm.press, na.rm=TRUE),
+    state = STATE
+  )  %>% distinct() %>%  collect()
+
+# find median of each state
+state_med <-  met_avg_state %>% group_by(state) %>% summarise(
+    state_temp = median(temp, na.rm=TRUE),
+    state_wind.sp = median(wind.sp, na.rm=TRUE),
+    state_atm.press = median(atm.press, na.rm=TRUE),
     state = state
-  )
-
-
+  ) %>% distinct() %>% collect()
+state_med
 ```
+```{r}
+met_avg_state_andmed <- merge(
+  x = met_avg_state,
+  y = state_med,
+  by.x = "state",
+  by.y = "state",
+  all.x = TRUE,
+  all.y = FALSE
+)
+```
+```{r}
+met_avg_state_andmed[is.na(met_avg_state_andmed)] <- 0
+diff_station <- met_avg_state_andmed %>% 
+  mutate(distance = udist(temp, wind.sp, atm.press, state_temp, state_wind.sp, state_atm.press))
+```
+```{r}
+min_diff <- diff_station %>% group_by(state) %>% summarise(min_diff = min(distance))
+merge(
+  x = min_diff,
+  y = diff_station,
+  by.x = c("min_diff", "state"),
+  by.y = c("distance", "state"),
+  all.x = FALSE,
+  all.y = FALSE) %>% select(USAFID, state)
+```
+
 
 Knit the doc and save it on GitHub.
 
@@ -234,7 +263,7 @@ Start by computing the states' average temperature. Use that measurement to clas
 - High: temp >= 25
 
 ```{r}
-
+  
 ```
 
 Once you are done with that, you can compute the following:
