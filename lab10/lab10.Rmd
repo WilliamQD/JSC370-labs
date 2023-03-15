@@ -1,0 +1,281 @@
+---
+title: "Lab 10 - RF, XGBoost"
+author: "William Zhang"
+output: 
+  html_document: default
+  # tufte::tufte_html:
+  #   css: style.css
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(include  = T, warning = F)
+```
+
+# Learning goals
+
+- Perform classification and regression with tree-based methods in R
+- Recognize that tree-based methods are capable of capturing non-linearities by splitting multiple times on the same variables
+- Compare the performance of classification trees, bagging, random forests, and boosting for predicting heart disease based on the ``heart`` data.
+
+# Lab description
+
+For this lab we will be working with simulated data and the `heart` dataset that you can download from [here](https://github.com/JSC370/jsc370-2023/blob/main/data/heart/heart.csv)
+
+
+### Setup packages
+
+You should install and load `rpart` (trees), `randomForest` (random forest), `gbm` (gradient boosting) and `xgboost` (extreme gradient boosting).
+
+
+```{r, eval=FALSE, warning=FALSE}
+install.packages(c("rpart", "rpart.plot", "randomForest", "gbm", "xgboost"))
+```
+
+### Load packages and data
+
+```{r, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(gbm)
+library(xgboost)
+
+heart <- read.csv("https://raw.githubusercontent.com/JSC370/jsc370-2023/main/data/heart/heart.csv") |>
+  mutate(
+    AHD = 1 * (AHD == "Yes"),
+    ChestPain = factor(ChestPain),
+    Thal = factor(Thal)
+  )
+head(heart)
+```
+
+
+---
+
+# Questions
+
+## Question 1: Trees with simulated data
+
+- Simulate data from a random uniform distribution [-5,5] and normally distributed errors (s.d = 0.5)
+- Create a non-linear relationship y=sin(x)+error
+- Split the data into test and training sets (500 points each), plot the data
+
+```{r sim,   warning=FALSE}
+set.seed(1984)
+n <- 1000
+x <- runif(n, -5,5) 
+error <- rnorm(n, sd = 0.5)
+y <- sin(x) + error 
+nonlin <- data.frame(y = y, x = x)
+
+train_size <- sample(1:1000, size = 500)
+nonlin_train <- nonlin[train_size,]
+nonlin_test <- nonlin[-train_size,]
+
+ggplot(nonlin,aes(y=y,x=x))+
+  geom_point() +
+  theme_minimal()
+```
+
+- Fit a regression tree using the training set, plot it
+```{r}
+treefit <- rpart(y ~ x, data = nonlin_train, method = "anova", control=list(cp=0))
+rpart.plot(treefit)
+```
+
+- Determine the optimal complexity parameter (cp) to prune the tree
+```{r}
+plotcp(treefit)
+opt_cp <- printcp(treefit)[9, 1]
+```
+
+- Plot the pruned tree and summarize
+
+```{r tree, warning=FALSE}
+tree_pruned <- prune(treefit, cp = opt_cp)
+rpart.plot(tree_pruned)
+summary(tree_pruned)
+```
+
+- Based on the plot and/or summary of the pruned tree create a vector of the (ordered) split points for variable x, and a vector of fitted values for the intervals determined by the split points of x.
+
+```{r splits,   warning=FALSE}
+x_split <- unname(sort(tree_pruned$split[, "index"]))
+predict(tree_pruned, data.frame(x = x_split))
+
+```
+- plot the stpe fucntion corresponding to the fitted (pruned) tree:
+
+```{r}
+stpfn <-  stepfun(x_split, predict(tree_pruned, data.frame(x = c(-999, x_split))))
+plot(y ~ x, data = nonlin_train)
+plot(stpfn, add = TRUE, lwd = 2, col = 'pink')
+```
+
+
+- Fit a linear model to the training data and plot the regression line. 
+```{r}
+linear <- lm(y ~ x, data = nonlin_train)
+plot(y ~ x, data = nonlin_train)
+plot(stpfn, add = TRUE, lwd = 2, col = 'pink')
+abline(linear, lwd = 2, col = 'red')
+```
+
+- Contrast the quality of the fit of the tree model vs. linear regression by inspection of the plot
+
+_Write about the differences_  The tree model seems much more accurate as it captures the nonlinear relationship between x and y, while the linear regression only shows the general trend.
+
+- Compute the test MSE of the pruned tree and the linear regression model
+
+```{r, warning=FALSE}
+tree_pred <- predict(tree_pruned, nonlin_test)
+lm_pred <- predict(linear, nonlin_test)
+
+tree_MSE <- sum((tree_pred-nonlin_test$y)**2) / length(tree_pred)
+lm_MSE <- sum((lm_pred-nonlin_test$y)**2) / length(lm_pred)
+tree_MSE
+lm_MSE
+```
+
+- Is the lm or regression tree better at fitting a non-linear function?
+
+**Answer:** According to the MSE of the tree model and the linear model, since a smaller MSE means a more accurate prediction, we conclude that the regression tree is better at fitting.
+
+---
+
+## Question 2: Analysis of Real Data
+- Split the `heart` data into training and testing (70-30%)
+
+```{r real_tree}
+set.seed(2023)
+train <- sample(1:nrow(heart), round(0.7*nrow(heart)))
+heart_train <- heart[train,]
+heart_test <- heart[-train,]
+```
+- Fit a classification tree using rpart, plot the full tree
+
+```{r}
+heart_tree <- rpart(AHD ~ ., data = heart_train, method = "class", control = list(
+  minsplits = 10, minbucket = 3, cp = 0, xval = 10
+))
+rpart.plot(heart_tree)
+```
+
+- Plot the complexity parameter table for an rpart fit and prune the tree
+```{r}
+plotcp(heart_tree)
+opt_cp <- printcp(heart_tree)[4, 1]
+heart_pruned <- prune(heart_tree, cp = opt_cp)
+rpart.plot(heart_pruned)
+```
+
+- Compute the test misclassification error
+```{r}
+heart_pred <- predict(heart_pruned, heart_test)
+sum((heart_pred[ , 2] > 0.5) == (heart_test$AHD == 0)) / nrow(heart_test)
+```
+
+- Fit the tree with the optimal complexity parameter to the full data (training + testing)
+
+```{r}
+tree_full <- rpart(AHD ~ ., data = heart, method = "class", control = list(
+  minsplits = 10, minbucket = 3, cp = opt_cp, xval = 10
+))
+rpart.plot(tree_full)
+```
+
+---
+
+## Question 3: Bagging, Random Forest
+
+- Compare the performance of classification trees (above), bagging, random forests for predicting heart disease based on the ``heart`` data.
+- Split the data into training and testing. Train each of the models on the training data and extract the cross-validation (or out-of-bag error for bagging and Random forest). 
+- For bagging use ``randomForest`` with ``mtry`` equal to the number of features (all other parameters at their default values). Generate the variable importance plot using ``varImpPlot`` and extract variable importance from the ``randomForest`` fitted object using the ``importance`` function.
+- For random forests use ``randomForest`` with the default parameters. Generate the variable importance plot using ``varImpPlot`` and extract variable importance from the ``randomForest`` fitted object using the ``importance`` function.
+```{r}
+n_features <- dim(heart_train)[2] - 1
+heart_bagging <- randomForest(as.factor(AHD) ~ .,
+                              data = heart_train,
+                              mtry = n_features,
+                              na.action = na.omit)
+mean(heart_bagging$err.rate[ , 1])
+
+varImpPlot(heart_bagging, main = "Vairable Importantce plot")
+importance(heart_bagging)
+```
+```{r}
+heart_rf <- randomForest(as.factor(AHD) ~ .,
+                              data = heart_train,
+                              na.action = na.omit)
+mean(heart_rf$err.rate[ , 1])
+
+varImpPlot(heart_rf, main = "Vairable Importantce plot")
+importance(heart_rf)
+```
+
+_Answer_: The oob error rate is 0.1705 for random forest, while the oob error for bagging is 0.1969 and 0.1978 for a single decision tree. Thus we can conclude the random forest model is more accurate for predicting our heart data in this case.
+
+---
+
+## Question 4: Boosting
+
+- For boosting use `gbm` with ``cv.folds=5`` to perform 5-fold cross-validation, and set ``class.stratify.cv`` to ``AHD`` (heart disease outcome) so that cross-validation is performed stratifying by ``AHD``.  Plot the cross-validation error as a function of the boosting iteration/trees (the `$cv.error` component of the object returned by ``gbm``) and determine whether additional boosting iterations are warranted. If so, run additional iterations with  ``gbm.more`` (use the R help to check its syntax). Choose the optimal number of iterations. Use the ``summary.gbm`` function to generate the variable importance plot and extract variable importance/influence (``summary.gbm`` does both). Generate 1D and 2D marginal plots with ``gbm.plot`` to assess the effect of the top three variables and their 2-way interactions. 
+
+```{r}
+heart_boosting <- gbm(AHD ~., data = heart_train,
+                      distribution = "bernoulli",
+                      cv.folds = 5,
+                      class.stratify.cv = TRUE,
+                      n.trees = 3000)
+plot(heart_boosting$cv.error, type = 'l', col = "pink", ylim = c(0, 2))
+lines(heart_boosting$train.error, type = 'l', col = "green")
+
+# Extract the optimal iterations count given by cv error
+opt_it <- which.min(heart_boosting$cv.error)
+opt_it
+```
+
+Choose the optimal number of iterations. Use the ``summary.gbm`` function to generate the variable importance plot and extract variable importance/influence (``summary.gbm`` does both).
+```{r}
+heart_boosting2 <- gbm(AHD ~., data = heart_train,
+                      distribution = "bernoulli",
+                      cv.folds = 5,
+                      class.stratify.cv = TRUE,
+                      n.trees = opt_it)
+
+plot(heart_boosting2$cv.error, type = 'l', col = "pink", ylim = c(0, 2))
+lines(heart_boosting2$train.error, type = 'l', col = "green")
+
+# variable importance for original and 'optimal' iteration gbt
+summary.gbm(heart_boosting)
+summary.gbm(heart_boosting2)
+
+```
+Generate 1D and 2D marginal plots with ``plot.gbm`` to assess the effect of the top three variables and their 2-way interactions. 
+```{r}
+# We will use the important variables of 'optimal' gradient boosted tree model that we found rather than 
+# the full tree model
+
+# 1D marginal plots
+par(mfrow=c(3,1))
+plot.gbm(heart_boosting2, i.var = "Ca", main = "Marginal plot of Ca")
+plot.gbm(heart_boosting2, i = "Thal", main = "Marginal plot of Thal")
+plot.gbm(heart_boosting2, i = "ChestPain", main = "Marginal plot of ChestPain")
+
+# 2D marginal plots
+plot.gbm(heart_boosting2, i.var = c("Ca", "Thal"), main = "Marginal plot of Ca and Thal")
+plot.gbm(heart_boosting2, i = c("Ca", "ChestPain"), main = "Marginal plot of Ca and ChestPain")
+plot.gbm(heart_boosting2, i = c("Thal","ChestPain"), main = "Marginal plot of Thal and ChestPain")
+
+
+```
+
+
+
+---
+
+
+# Deliverables
+
+1. Questions 1-4 answered, pdf or html output uploaded to quercus
